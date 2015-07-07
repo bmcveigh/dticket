@@ -1,0 +1,672 @@
+<?php
+
+/**
+ * @file
+ * A ticketing system for Drupal.
+ */
+module_load_include('inc', 'dticket', 'includes/dticket.database');
+
+/**
+ * Implements hook_help().
+ */
+function dticket_help($path, $arg) {
+  switch ($path) {
+    // Main module help for the block module
+    case 'admin/help#dticket':
+      return '<p>' . t('Drupal Ticket (or dticket for short) is a module where users can submit tickets. It also provides an admin interface.') . '</p>';
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function dticket_menu() {
+  $items['dticket'] = array(
+    'title' => 'Drupal Ticket Form',
+    'description' => 'This page is the landing page for Drupal Ticket.',
+    'access callback' => TRUE,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('dticket_landing'),
+  );
+  $items['dticket/add'] = array(
+    'title' => 'Add a Ticket',
+    'description' => 'This page is used to create a new ticket.',
+    'access callback' => TRUE,
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('dticket_get_form'),
+  );
+  $items['dticket/view-tickets'] = array(
+    'title' => 'View My Tickets',
+    'description' => 'This page is used to view the user\'s tickets.',
+    'access callback' => TRUE,
+    'page callback' => 'dticket_view',
+  );
+  $items['dticket/lookup-ticket'] = array(
+    'title' => 'Lookup a Ticket',
+    'description' => 'This page is used for users to lookup tickets.',
+    'access arguments' => array('access dticket lookup'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('dticket_lookup_view'),
+  );
+  $items['admin/config/dticket'] = array(
+    'title' => 'Drupal Ticket',
+    'page callback' => 'dticket_admin',
+    'page arguments' => array('config-home'),
+    'access arguments' => array('administer dticket'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/config/dticket/moderate'] = array(
+    'title' => 'Moderate Tickets',
+    'page arguments' => array(3),
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => -9,
+  );
+  $items['admin/config/dticket/view/%'] = array(
+    'title' => 'Moderate Tickets',
+    'page callback' => 'dticket_view_ticket',
+    'page arguments' => array(4),
+    'access arguments' => array('administer dticket'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/config/dticket/settings'] = array(
+    'title' => 'Configure',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('dticket_settings_form'),
+    'access arguments' => array('administer dticket'),
+    'type' => MENU_LOCAL_TASK,
+    'weight' => -8,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function dticket_permission() {
+  return array(
+    'administer dticket' => array(
+      'title' => t('Administer dticket'),
+      'description' => t('Configure dticket module'),
+    ),
+    'access dticket lookup' => array(
+      'title' => t('Access Drupal Ticket Lookup'),
+      'description' => t('Determines whether users can lookup tickets.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_mail().
+ */
+function dticket_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'dticket_touser_key':
+      $message['subject'] = t('Ticket ID submitted successfully.');
+      $message['body'] = array();
+      $message['body'][] = t('Hello @name,', $params);
+      $message['body'][] = t('A ticket has been created for you. Your ticket ID number is #@ticket-id', $params);
+      $message['body'][] = t('Here is your message:');
+      $message['body'][] = t('@message', $params);
+      break;
+    case 'dticket_toadmin_key':
+      $message['subject'] = t('please respond to ticket id #@ticket-id.', $params);
+      $message['body'] = array();
+      $message['body'][] = t('Hello @name,', $params);
+      $message['body'][] = t('Please review the following ticket id #@ticket-id:', $params);
+      $message['body'][] = '<strong>' . t('Here is their message:') . '</strong>';
+      $message['body'][] = t('@message', $params);
+      break;
+  }
+}
+
+/**
+ * The settings form for the Drupal Ticket module.
+ */
+function dticket_settings_form($form, &$form_state) {
+  $welcome_message = t('Welcome to Drupal Ticket. Please select an option below.');
+
+  $form['general_settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Drupal Ticket General Settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+  );
+  $form['general_settings']['dticket_title'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Drupal Ticket Title'),
+    '#description' => t('Enter the title you wish this module to display.'),
+    '#default_value' => variable_get('dticket_title', 'Welcome to Drupal Ticket'),
+    '#required' => TRUE,
+  );
+  $form['form_settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Drupal Ticket Form Settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+  );
+  $form['form_settings']['dticket_require_user_login'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Require User Login?'),
+    '#description' => t('Check the checkbox if users must be logged in.'),
+    '#default_value' => variable_get('dticket_require_user_login', FALSE),
+  );
+  $form['form_settings']['dticket_welcome_message'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Welcome Message'),
+    '#description' => t('Enter the welcome message displayed on the Drupal Ticket Landing Page.'),
+    '#default_value' => variable_get('dticket_welcome_message', $welcome_message),
+    '#required' => TRUE,
+  );
+  $form['form_settings']['dticket_required_fields'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Required Fields'),
+    '#description' => t('Enter the required fields for the Drupal Ticket add form.'),
+    '#options' => array(
+      'first_name' => t('First Name'),
+      'last_name' => t('Last Name'),
+      'email' => t('Email'),
+      'message' => t('Message'),
+    ),
+  );
+  $form['email_settings'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Drupal Ticket Email Settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+  );
+  $form['email_settings']['dticket_moderator_email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Moderator Email'),
+    '#description' => t('Enter the moderator\'s email address.'),
+    '#default_value' => variable_get('dticket_moderator_email', 'no-reply@yoursite.com'),
+    '#required' => TRUE,
+  );
+  $form['email_settings']['dticket_send_moderator_emails'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Send email notifications to moderator'),
+    '#description' => t('Send email notifications to the moderator.'),
+    '#default_value' => variable_get('dticket_send_moderator_emails', FALSE),
+    '#required' => FALSE,
+  );
+
+  return system_settings_form($form);
+}
+
+/**
+ * Page callback for a user to view their tickets.
+ *
+ * @return
+ *   A render array that will be converted into HTML markup.
+ */
+function dticket_view() {
+  global $user;
+
+  if (!empty($user->uid)) {
+    $query = db_select('dticket', 'd')
+        ->fields('d', array('ticket_id', 'message', 'status', 'submitted'))
+        ->condition('uid', $user->uid, '=')
+        ->execute();
+
+    $result = $query->fetchAll();
+
+    $header = array(
+      'Ticket ID',
+      'Message',
+      'Status',
+      'Date Submitted',
+    );
+
+    $rows = array();
+
+    foreach ($result as $item) {
+      // This will be a string describing the ticket status.
+      $ticket_status = dticket_get_status($item->status);
+
+      $rows[] = array(
+        $item->ticket_id,
+        $item->message,
+        $ticket_status,
+        date('M D Y', $item->submitted),
+      );
+    }
+
+    $build['message'] = array(
+      '#type' => 'markup',
+      '#markup' => theme('table', array('header' => $header, 'rows' => $rows)),
+    );
+  }
+  else {
+    $build['message'] = array(
+      '#type' => 'markup',
+      '#markup' => '<h3>' . _dticket_get_login_message('view') . '</h3>',
+    );
+  }
+
+  return $build;
+}
+
+/**
+ * Page callback for the dticket landing page.
+ *
+ * @return array
+ *   The render array for the landing page. This will be converted
+ *   into HTML markup.
+ */
+function dticket_landing($form, &$form_state) {
+  $title = variable_get('dticket_title', 'Welcome to Drupal Ticket');
+
+  $form['dticket'] = array(
+    '#type' => 'fieldset',
+    '#title' => $title,
+    '#collapsible' => FALSE,
+  );
+
+  $message = variable_get('dticket_welcome_message', 'Welcome to Drupal Ticket. Please select an option below.');
+
+  $form['dticket']['message'] = array(
+    '#type' => 'markup',
+    '#markup' => '<h3>' . $message . '</h3>',
+  );
+
+  $form['dticket']['createticket'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>' . l(t('Create a ticket'), 'dticket/add') . '</p>',
+  );
+
+  $form['dticket']['viewtickets'] = array(
+    '#type' => 'markup',
+    '#markup' => '<p>' . l(t('View my tickets'), 'dticket/view-tickets') . '</p>',
+  );
+
+  // Since the user might not have permission to look up tickets, we should
+  // only display this link if they have permission.
+  if (user_access('access dticket lookup')) {
+    $form['dticket']['lookupticket'] = array(
+      '#type' => 'markup',
+      '#markup' => '<p>' . l(t('Look up ticket'), 'dticket/lookup-ticket') . '</p>',
+    );
+  }
+
+  $form['#submit'][] = 'dticket_landing_submit';
+
+  return $form;
+}
+
+/**
+ * Submit handler for the dticket landing page.
+ */
+function dticket_landing_submit($form, &$form_state) {
+
+}
+
+/**
+ * Page callback to get the status of the user's ticket.
+ */
+function dticket_get_ticket_status() {
+
+}
+
+/**
+ * Page callback for the form users submit a message.
+ */
+function dticket_get_form($form, &$form_state) {
+  global $user;
+
+  // This variable will help determine if the user needs to be logged in
+  // to submit a ticket.
+  $need_login = variable_get('dticket_require_user_login', FALSE);
+
+  if (!empty($user->uid) || !$need_login) {
+    $form['first_name'] = array(
+      '#type' => 'textfield',
+      '#title' => t('First Name'),
+      '#description' => t('Enter your First Name'),
+      '#required' => TRUE,
+    );
+    $form['last_name'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Last Name'),
+      '#description' => t('Enter your Last Name'),
+      '#required' => TRUE,
+    );
+    $form['email'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Email'),
+      '#description' => t('Enter your Email Address'),
+      '#value' => isset($user->mail) ? check_plain($user->mail) : '',
+      '#required' => TRUE,
+    );
+    $form['message'] = array(
+      '#type' => 'textarea',
+      '#title' => t('Message'),
+      '#description' => t('Enter your message.'),
+      '#required' => TRUE,
+    );
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Send Ticket'),
+    );
+
+    $form['#submit'][] = 'dticket_form_submit';
+  }
+  else {
+    $form['message'] = array(
+      '#type' => 'markup',
+      '#markup' => '<h3>' . _dticket_get_login_message() . '</h3>',
+    );
+  }
+  return $form;
+}
+
+/**
+ * Returns a message that asks the user to log in.
+ *
+ * @param $action string
+ *   This is the type of action user is trying to perform (i.e. submit or view).
+ *
+ * @return string
+ *   The message to the user that they need to be logged in to submit a ticket.
+ */
+function _dticket_get_login_message($action = 'create') {
+  return t('You must be logged in to !action a ticket. Click !link to log in.', array(
+    '!link' => l(t('here'), 'user/login', array(
+      'query' => array(
+        'destination' => 'dticket/add',
+      )
+    )),
+    '!action' => $action,
+  ));
+}
+
+/**
+ * Sanitizes input values in a form.
+ *
+ * @param $values array
+ *   These are the form values that need to be sanitized.
+ *
+ * @return array
+ *   Those same form values that have been sanitized.
+ */
+function clean_form_values($values) {
+  $sanitized_values = array();
+
+  foreach ($values as $key => $value) {
+    $sanitized_values[$key] = check_plain($value);
+  }
+
+  return $sanitized_values;
+}
+
+/**
+ * Submit handler for the dticket add ticket form.
+ */
+function dticket_form_submit($form, &$form_state) {
+  if (isset($form_state['values'])) {
+    global $user;
+
+    $form_values = clean_form_values($form_state['values']);
+
+    $uid = $user->uid;
+
+    $first_name = $form_values['first_name'];
+    $last_name = $form_values['last_name'];
+    $to = $form_values['email'];
+    $message = $form_values['message'];
+
+    $time = time();
+
+    // TODO: we will want to convert this to drupal_write_record and make a
+    // function out of it in includes/dticket.database.inc
+    $query = db_insert('dticket')
+      ->fields(array(
+      'uid' => $uid,
+      'first_name' => $first_name,
+      'last_name' => $last_name,
+      'email' => $to,
+      'message' => $message,
+      'status' => 0,
+      'submitted' => $time,
+    ));
+
+    $success = $query->execute();
+
+    if ($success) {
+      $ticket_id = db_select('dticket', 'dt')
+        ->fields('dt', array('ticket_id'))
+        ->condition('first_name', $first_name, '=')
+        ->condition('submitted', $time, '=')
+        ->execute()
+        ->fetchColumn();
+
+      drupal_set_message(t('Your ticket was submitted successfully. Your ticket id is <strong>@ticket_id</strong>. Please keep this for your records.', array('@ticket_id' => check_plain($ticket_id))));
+
+      $params = array(
+        '@name' => $first_name . ' ' . $last_name,
+        '@message' => $message,
+        '@ticket-id' => $ticket_id,
+      );
+
+      // Send emails to both the user and the admins.
+      dticket_send_email('user', $form_values, $params);
+
+      // Check to see if we should send emails to the moderators.
+      $send_moderator_emails = variable_get('dticket_send_moderator_emails', FALSE);
+
+      if ($send_moderator_emails) {
+        dticket_send_email('admin', $form_values, $params);
+      }
+    }
+    else {
+      drupal_set_message(t('Could not submit ticket. An error occurred.'), 'error');
+    }
+  }
+}
+
+/**
+ * Sends an email to either the user or admins admin.
+ *
+ * @param $who string
+ *   The type of user to send the email to. It can be
+ *   an admin or a user.
+ *
+ * @param $form_values array
+ *   This should be the submitted values from the form
+ *   that were sanitized.
+ *
+ * @param $params array
+ *   This is the data to be sent to construct the email.
+ */
+function dticket_send_email($who, $form_values, $params) {
+  $module = 'dticket';
+  $language = language_default();
+  $from = 'no-reply@brianmcveigh.com';
+
+  // The purpose of this switch statement is to set the key.
+  switch ($who) {
+    case 'admin':
+      // $key = 'dticket_toadmin_key';
+
+      // // Get the list of people that can moderate.
+      // $admins = dticket_get_admins();
+
+      // // Email all of the admins/moderators.
+      // foreach ($admins as $admin) {
+      //   drupal_mail($module, $key, $admin->mail, $language, $params, $from);
+      // }
+
+      break;
+
+    case 'user':
+      $key = 'dticket_touser_key';
+      $to = $form_values['email'];
+      // Send the email now that we have the key.
+      drupal_mail($module, $key, $to, $language, $params, $from);
+      break;
+  }
+}
+
+/**
+ * Page callback for the dticket administration pages.
+ *
+ * @param $arg string
+ *   This is the last parameter for the query string. It determines what
+ *   page is called.
+ *
+ * @return mixed
+ *   This may return a render array, an empty array, or nothing (void).
+ *
+ */
+function dticket_admin($arg) {
+  switch ($arg) {
+    case 'config-home':
+      drupal_goto('admin/config/dticket/moderate');
+      break;
+
+    case 'moderate':
+      return _dticket_get_moderation_list();
+
+    default:
+      drupal_not_found();
+      return array();
+  }
+}
+
+/**
+ * Callback to view/moderate one ticket.
+ *
+ * @param int $ticket_id
+ *   The ticket id to be queried.
+ *
+ * @return array
+ *   Rendered HTML table containing the data for a ticket.
+ *
+ */
+function dticket_view_ticket($ticket_id) {
+  $data = array(
+    'ticket_id' => $ticket_id,
+  );
+
+  $result = (array) dticket_get_tickets($data);
+
+  $header = array(
+    t('Item'),
+    t('Description'),
+  );
+
+  $rows = array();
+
+  foreach ($result as $key => $value) {
+    if ($key === 'submitted') {
+      $value = date('Y-m-d H:i:s', $value);
+    }
+    $rows[] = array($key, $value);
+  }
+
+  $rows[] = array('<strong>' . t('Actions') . '</strong>', l(t('Reply'), "admin/config/dticket/reply/$ticket_id"));
+
+  return theme('table', array('header' => $header, 'rows' => $rows));
+}
+
+/**
+ * This gets the moderation list for dticket.
+ * 
+ * @return array
+ *   The render array.
+ */
+function _dticket_get_moderation_list() {
+  $query = db_select('dticket', 'd')
+    ->fields('d')
+    ->execute();
+
+  $result = $query->fetchAll();
+
+  $header = array(
+    'Ticket ID',
+    'First Name',
+    'Last Name',
+    'Email',
+    'Message',
+    'Status',
+    'Date Submitted',
+  );
+
+  $rows = array();
+
+  foreach ($result as $item) {
+    $status = dticket_get_status($item->ticket_id);
+    
+    $rows[] = array(
+      l($item->ticket_id, "admin/config/dticket/view/$item->ticket_id"),
+      $item->first_name,
+      $item->last_name,
+      $item->email,
+      $item->message,
+      $status,
+      date('M D Y', $item->submitted),
+    );
+  }
+
+  $build['message'] = array(
+    '#type' => 'markup',
+    '#markup' => theme('table', array('header' => $header, 'rows' => $rows)),
+  );
+
+  return $build;
+}
+
+/**
+ * Page callback to show a form to look up a drupal ticket.
+ */
+function dticket_lookup_view($form, &$form_state) {
+  $form['lookup_view'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Look up a ticket'),
+    '#collapsible' => FALSE,
+    '#collapsed' => FALSE,
+  );
+  $form['lookup_view']['ticket_id'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Ticket ID'),
+    '#description' => t('Enter your ticket ID.'),
+    '#required' => TRUE,
+  );
+  $form['lookup_view']['last_name'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Last Name'),
+    '#description' => t('Enter your last name.'),
+    '#required' => TRUE,
+  );
+  $form['lookup_view']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Lookup'),
+    '#ajax' => array(
+      'callback' => 'ajax_dticket_lookup_submit_handler',
+      'wrapper' => 'edit-lookup-view',
+      'method' => 'replace',
+      'effect' => 'fade',
+    ),
+  );
+  
+  return $form;
+}
+
+/**
+ * Ajax form for the dticket lookup form.
+ */
+function ajax_dticket_lookup_submit_handler($form, &$form_state) {
+  $values = clean_form_values($form_state['values']);
+  
+  $data = array(
+    'ticket_id' => isset($values['ticket_id']) ? $values['ticket_id'] : '',
+    'last_name' => isset($values['last_name']) ? $values['last_name'] : '',
+  );
+  
+  $ticket = dticket_get_tickets($data);
+    
+  $form['lookup_results'] = array(
+    '#type' => 'markup',
+    '#markup' => !empty($ticket) ? 'Status: ' . dticket_get_ticket_status($ticket->status) : 'Ticket not found.',
+  );
+  
+  return $form;
+}

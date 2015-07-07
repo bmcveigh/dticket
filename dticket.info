@@ -1,0 +1,6 @@
+name = Drupal Ticket
+description = A ticketing system for Drupal.
+package = Pakorasoft
+core = 7.x
+
+configure = admin/config/dticket/settings

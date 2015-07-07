@@ -1,0 +1,137 @@
+<?php
+
+/**
+ * @file
+ * The install file for Drupal Ticket.
+ *
+ * TODO: think about adding another table for replies to
+ * a particular ticket. We could call the table
+ * dticket_replies. We might also want to create a table
+ * that contains user metadata called dticket_people.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function dticket_install() {
+  // These are the ticket status options to be inserted into the database.
+  $statuses = array(
+    array(
+      'id' => 0,
+      'status' => 'Open'
+    ),
+    array(
+      'id' => 1,
+      'status' => 'Being Reviewed'
+    ),
+    array(
+      'id' => 2,
+      'status' => 'Closed'
+    ),
+  );
+  
+  // Put the statuses into the dticket_status table.
+  foreach ($statuses as $record) {
+    drupal_write_record('dticket_status', $record);
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function dticket_uninstall() {
+  $result = db_select('variable', 'v')
+    ->fields('v', array('name'))
+    ->condition('name', 'dticket_%', 'LIKE')
+    ->execute();
+  
+  
+  foreach ($result as $row) {
+    variable_del($row->name);
+  }
+}
+
+/** Implements hook_schema().
+ *
+ * Available data types:
+ * @link http://drupal.org/node/159605
+ */
+function dticket_schema() {
+  $schema['dticket'] = array(
+    'description' => 'This table contains all of the tickets entered by users.',
+    'fields' => array(
+      'ticket_id' => array(
+        'description' => 'This is the primary key and is what will identify a ticket.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'uid' => array(
+        'description' => 'The user\'s id.',
+        'type' => 'int',
+        'not null' => FALSE,
+      ),
+      'first_name' => array(
+        'description' => 'The first name of the user.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => FALSE,
+        'default' => '',
+      ),
+      'last_name' => array(
+        'description' => 'The last name of the user.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => FALSE,
+        'default' => '',
+      ),
+      'email' => array(
+        'description' => 'The user email address.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => FALSE,
+        'default' => '',
+      ),
+      'message' => array(
+        'description' => 'The content of the ticket.',
+        'type' => 'text',
+        'size' => 'big',
+        'not null' => FALSE,
+      ),
+      'status' => array(
+        'description' => 'The status of the ticket, in string format.',
+        'type' => 'varchar',
+        'length' => '16',
+        'not null' => FALSE,
+      ),
+      'submitted' => array(
+        'description' => 'The date that the ticket was submitted in a UNIX timestamp.',
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+    ),
+    'primary key' => array('ticket_id'),
+  );
+  
+  $schema['dticket_status'] = array(
+    'description' => 'This table defines the ticket statuses available.',
+    'fields' => array(
+      'id' => array(
+        'description' => 'This is the ticket status identifier.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'status' => array(
+        'description' => 'This is the ticket status description.',
+        'type' => 'varchar',
+        'length' => '255',
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array('id'),
+  );
+
+  return $schema;
+}

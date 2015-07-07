@@ -484,16 +484,6 @@ function dticket_send_email($who, $form_values, $params) {
   // The purpose of this switch statement is to set the key.
   switch ($who) {
     case 'admin':
-      // $key = 'dticket_toadmin_key';
-
-      // // Get the list of people that can moderate.
-      // $admins = dticket_get_admins();
-
-      // // Email all of the admins/moderators.
-      // foreach ($admins as $admin) {
-      //   drupal_mail($module, $key, $admin->mail, $language, $params, $from);
-      // }
-
       break;
 
     case 'user':
